@@ -40,13 +40,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
-import com.example.data.TripVisitEntity
+import com.example.ui.DisplayVisit
 import com.example.util.DateUtils
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MemoryDetailSheet(
-    visit: TripVisitEntity,
+    visit: DisplayVisit,
     todayEpochDay: Long,
     onDismiss: () -> Unit,
     onSaveMemoryNotes: (String) -> Unit,
@@ -92,7 +92,7 @@ fun MemoryDetailSheet(
                             modifier = Modifier.size(16.dp)
                         )
                         Text(
-                            text = if (visit.isCompletedManually) "Ditandai Selesai" else "Tanggal Terlewati",
+                            text = if (visit.completedManually) "Ditandai Selesai" else "Tanggal Terlewati",
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSecondaryContainer
                         )
@@ -197,7 +197,7 @@ fun MemoryDetailSheet(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                if (visit.isCompletedManually && visit.visitDateEpochDay >= todayEpochDay) {
+                if (visit.completedManually && visit.visitDateEpochDay >= todayEpochDay) {
                     TextButton(
                         onClick = {
                             onRevertCompleted()

@@ -3,15 +3,32 @@ package com.example.ui
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import com.example.collab.CollabRepository
+import com.example.collab.SharedTrip
+import com.example.collab.SharedVisit
+import com.example.collab.TripDateComment
+import com.example.collab.TripMember
 import com.example.data.TripRepository
 import com.example.data.TripVisitEntity
+import com.example.notifications.AlarmScheduleResult
+import com.example.notifications.TripAlarmScheduler
 import com.example.util.DateUtils
+import com.google.firebase.firestore.FirebaseFirestoreException
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -27,45 +44,96 @@ enum class MemoryFilter {
     DENGAN_CATATAN
 }
 
+sealed interface Workspace {
+    data object Local : Workspace
+    data class Shared(val tripId: String) : Workspace
+}
+
+private data class ActiveTripCollabData(
+    val visits: List<SharedVisit> = emptyList(),
+    val members: List<TripMember> = emptyList(),
+    val comments: List<TripDateComment> = emptyList()
+)
+
 private data class NavAndModalState(
     val selectedTab: TripTab = TripTab.BERANDA,
+    val activeWorkspace: Workspace = Workspace.Local,
     val currentYear: Int = DateUtils.currentYearAndMonth().first,
     val currentMonth: Int = DateUtils.currentYearAndMonth().second,
     val selectedDateEpochDay: Long = DateUtils.todayEpochDay(),
     val memoryFilter: MemoryFilter = MemoryFilter.SEMUA,
     val memorySearchQuery: String = "",
-    val activeMapsVisit: TripVisitEntity? = null,
+    val activeMapsVisit: DisplayVisit? = null,
     val activeAddEditDateEpochDay: Long? = null,
-    val editingVisit: TripVisitEntity? = null,
-    val activeMemoryDetailVisit: TripVisitEntity? = null
+    val editingVisit: DisplayVisit? = null,
+    val activeMemoryDetailVisit: DisplayVisit? = null,
+    val showCreateTripDialog: Boolean = false,
+    val showJoinTripDialog: Boolean = false,
+    val joinTripPrefillCode: String = "",
+    val joinTripError: String? = null,
+    val isSubmittingCollab: Boolean = false,
+    val showInviteSheetForTrip: SharedTrip? = null,
+    val showMembersScreen: Boolean = false,
+    val showAccountSheet: Boolean = false,
+    val collabErrorMessage: String? = null
 )
 
 data class TripBuddyUiState(
+    val currentUserId: String = "",
+    val currentUserName: String = "",
+    val currentUserEmail: String = "",
+    val currentUserPhotoUrl: String = "",
     val selectedTab: TripTab = TripTab.BERANDA,
+    val activeWorkspace: Workspace = Workspace.Local,
+    val sharedTrips: List<SharedTrip> = emptyList(),
+    val activeSharedTrip: SharedTrip? = null,
+    val activeTripMembers: List<TripMember> = emptyList(),
+    val commentsOnSelectedDate: List<TripDateComment> = emptyList(),
     val currentYear: Int = DateUtils.currentYearAndMonth().first,
     val currentMonth: Int = DateUtils.currentYearAndMonth().second,
     val selectedDateEpochDay: Long = DateUtils.todayEpochDay(),
     val todayEpochDay: Long = DateUtils.todayEpochDay(),
     val nowMillis: Long = System.currentTimeMillis(),
-    val allVisits: List<TripVisitEntity> = emptyList(),
-    val upcomingVisits: List<TripVisitEntity> = emptyList(),
-    val nearestTrip: TripVisitEntity? = null,
-    val visitedMemories: List<TripVisitEntity> = emptyList(),
-    val filteredMemories: List<TripVisitEntity> = emptyList(),
+    val allVisits: List<DisplayVisit> = emptyList(),
+    val upcomingVisits: List<DisplayVisit> = emptyList(),
+    val nearestTrip: DisplayVisit? = null,
+    val visitedMemories: List<DisplayVisit> = emptyList(),
+    val filteredMemories: List<DisplayVisit> = emptyList(),
     val memoryFilter: MemoryFilter = MemoryFilter.SEMUA,
     val memorySearchQuery: String = "",
-    val visitsOnSelectedDate: List<TripVisitEntity> = emptyList(),
+    val visitsOnSelectedDate: List<DisplayVisit> = emptyList(),
     val upcomingDatesInMonth: Set<Long> = emptySet(),
     val memoryDatesInMonth: Set<Long> = emptySet(),
-    val activeMapsVisit: TripVisitEntity? = null,
+    val activeMapsVisit: DisplayVisit? = null,
     val activeAddEditDateEpochDay: Long? = null,
-    val editingVisit: TripVisitEntity? = null,
-    val activeMemoryDetailVisit: TripVisitEntity? = null
+    val editingVisit: DisplayVisit? = null,
+    val activeMemoryDetailVisit: DisplayVisit? = null,
+    val showCreateTripDialog: Boolean = false,
+    val showJoinTripDialog: Boolean = false,
+    val joinTripPrefillCode: String = "",
+    val joinTripError: String? = null,
+    val isSubmittingCollab: Boolean = false,
+    val showInviteSheetForTrip: SharedTrip? = null,
+    val showMembersScreen: Boolean = false,
+    val showAccountSheet: Boolean = false,
+    val collabErrorMessage: String? = null
 )
 
-class TripBuddyViewModel(private val repository: TripRepository) : ViewModel() {
+@OptIn(ExperimentalCoroutinesApi::class)
+class TripBuddyViewModel(
+    private val localRepository: TripRepository,
+    private val collabRepository: CollabRepository,
+    private val alarmScheduler: TripAlarmScheduler,
+    private val currentUserId: String,
+    private val currentUserName: String,
+    private val currentUserEmail: String,
+    private val currentUserPhotoUrl: String
+) : ViewModel() {
 
     private val navAndModalState = MutableStateFlow(NavAndModalState())
+
+    private val _snackbarEvents = Channel<String>(Channel.BUFFERED)
+    val snackbarEvents = _snackbarEvents.receiveAsFlow()
 
     private val tickerMillis = flow {
         while (true) {
@@ -74,23 +142,92 @@ class TripBuddyViewModel(private val repository: TripRepository) : ViewModel() {
         }
     }
 
-    val uiState: StateFlow<TripBuddyUiState> = combine(
-        repository.allVisits,
-        navAndModalState,
-        tickerMillis
-    ) { visits, nav, nowMillis ->
-        val today = DateUtils.todayEpochDay(nowMillis)
+    private fun extractErrorMessage(error: Throwable, fallback: String): String {
+        val firestoreError = generateSequence(error) { it.cause }
+            .filterIsInstance<FirebaseFirestoreException>()
+            .firstOrNull()
+        return firestoreError?.localizedMessage ?: error.localizedMessage ?: fallback
+    }
 
-        val upcoming = visits.filter { visit ->
-            !visit.isCompletedManually && visit.visitDateEpochDay >= today
+    private val sharedTripsFlow = collabRepository.observeUserTrips(currentUserId)
+        .catch { error ->
+            val firestoreError = generateSequence(error) { it.cause }
+                .filterIsInstance<FirebaseFirestoreException>()
+                .firstOrNull()
+            if (firestoreError == null && error is CancellationException) throw error
+            val msg = extractErrorMessage(error, "Gagal memuat trip bersama.")
+            navAndModalState.update { it.copy(collabErrorMessage = msg) }
+            emit(emptyList())
         }
 
-        val memories = visits
-            .filter { visit ->
-                visit.isCompletedManually || visit.visitDateEpochDay < today
+    private val activeSharedTripIdFlow = navAndModalState
+        .map { (it.activeWorkspace as? Workspace.Shared)?.tripId }
+        .distinctUntilChanged()
+
+    private val activeTripCollabFlow = activeSharedTripIdFlow.flatMapLatest { tripId ->
+        if (tripId == null) {
+            flowOf(ActiveTripCollabData())
+        } else {
+            val visitsFlow = collabRepository.observeTripVisits(tripId).catch { error ->
+                val firestoreError = generateSequence(error) { it.cause }
+                    .filterIsInstance<FirebaseFirestoreException>()
+                    .firstOrNull()
+                if (firestoreError == null && error is CancellationException) throw error
+                navAndModalState.update {
+                    it.copy(collabErrorMessage = extractErrorMessage(error, "Gagal memuat lokasi trip bersama."))
+                }
+                emit(emptyList())
             }
+            val membersFlow = collabRepository.observeTripMembers(tripId).catch { error ->
+                val firestoreError = generateSequence(error) { it.cause }
+                    .filterIsInstance<FirebaseFirestoreException>()
+                    .firstOrNull()
+                if (firestoreError == null && error is CancellationException) throw error
+                emit(emptyList())
+            }
+            val commentsFlow = collabRepository.observeTripComments(tripId).catch { error ->
+                val firestoreError = generateSequence(error) { it.cause }
+                    .filterIsInstance<FirebaseFirestoreException>()
+                    .firstOrNull()
+                if (firestoreError == null && error is CancellationException) throw error
+                emit(emptyList())
+            }
+            combine(visitsFlow, membersFlow, commentsFlow) { visits, members, comments ->
+                ActiveTripCollabData(visits = visits, members = members, comments = comments)
+            }
+        }
+    }
+
+    val uiState: StateFlow<TripBuddyUiState> = combine(
+        localRepository.allVisits,
+        sharedTripsFlow,
+        activeTripCollabFlow,
+        navAndModalState,
+        tickerMillis
+    ) { localVisits, sharedTrips, collabData, nav, nowMillis ->
+        val today = DateUtils.todayEpochDay(nowMillis)
+
+        val activeSharedTrip = (nav.activeWorkspace as? Workspace.Shared)?.let { shared ->
+            sharedTrips.find { it.id == shared.tripId }
+        }
+
+        val visits: List<DisplayVisit> = when (nav.activeWorkspace) {
+            Workspace.Local -> localVisits.map { DisplayVisit.fromLocal(it) }
+            is Workspace.Shared -> collabData.visits.map { DisplayVisit.fromShared(it) }
+        }
+
+        val upcoming = visits
+            .filter { visit -> !visit.completedManually && visit.visitDateEpochDay >= today }
             .sortedWith(
-                compareByDescending<TripVisitEntity> { it.visitDateEpochDay }
+                compareBy<DisplayVisit> { it.visitDateEpochDay }
+                    .thenBy { it.visitHour }
+                    .thenBy { it.visitMinute }
+            )
+
+        val memories = visits
+            .filter { visit -> visit.completedManually || visit.visitDateEpochDay < today }
+            .sortedWith(
+                compareByDescending<DisplayVisit> { it.visitDateEpochDay }
                     .thenByDescending { it.visitHour }
                     .thenByDescending { it.visitMinute }
                     .thenByDescending { it.createdAtMillis }
@@ -114,6 +251,12 @@ class TripBuddyViewModel(private val repository: TripRepository) : ViewModel() {
 
         val selectedVisits = visits.filter { it.visitDateEpochDay == nav.selectedDateEpochDay }
 
+        val commentsOnSelectedDate = if (nav.activeWorkspace is Workspace.Shared) {
+            collabData.comments.filter { it.dateEpochDay == nav.selectedDateEpochDay }
+        } else {
+            emptyList()
+        }
+
         val daysInActiveMonth = DateUtils.daysInMonth(nav.currentYear, nav.currentMonth)
         val monthStart = DateUtils.epochDayFromYmd(nav.currentYear, nav.currentMonth, 1)
         val monthEnd = DateUtils.epochDayFromYmd(nav.currentYear, nav.currentMonth, daysInActiveMonth)
@@ -122,7 +265,7 @@ class TripBuddyViewModel(private val repository: TripRepository) : ViewModel() {
         val memoryDates = mutableSetOf<Long>()
         visits.forEach { visit ->
             if (visit.visitDateEpochDay in monthStart..monthEnd) {
-                if (!visit.isCompletedManually && visit.visitDateEpochDay >= today) {
+                if (!visit.completedManually && visit.visitDateEpochDay >= today) {
                     upcomingDates.add(visit.visitDateEpochDay)
                 } else {
                     memoryDates.add(visit.visitDateEpochDay)
@@ -137,8 +280,21 @@ class TripBuddyViewModel(private val repository: TripRepository) : ViewModel() {
             visits.find { it.id == current.id } ?: current
         }
 
+        val refreshedInviteTrip = nav.showInviteSheetForTrip?.let { current ->
+            sharedTrips.find { it.id == current.id } ?: current
+        }
+
         TripBuddyUiState(
+            currentUserId = currentUserId,
+            currentUserName = currentUserName,
+            currentUserEmail = currentUserEmail,
+            currentUserPhotoUrl = currentUserPhotoUrl,
             selectedTab = nav.selectedTab,
+            activeWorkspace = nav.activeWorkspace,
+            sharedTrips = sharedTrips,
+            activeSharedTrip = activeSharedTrip,
+            activeTripMembers = if (nav.activeWorkspace is Workspace.Shared) collabData.members else emptyList(),
+            commentsOnSelectedDate = commentsOnSelectedDate,
             currentYear = nav.currentYear,
             currentMonth = nav.currentMonth,
             selectedDateEpochDay = nav.selectedDateEpochDay,
@@ -157,16 +313,159 @@ class TripBuddyViewModel(private val repository: TripRepository) : ViewModel() {
             activeMapsVisit = refreshedMapsVisit,
             activeAddEditDateEpochDay = nav.activeAddEditDateEpochDay,
             editingVisit = nav.editingVisit,
-            activeMemoryDetailVisit = refreshedMemoryVisit
+            activeMemoryDetailVisit = refreshedMemoryVisit,
+            showCreateTripDialog = nav.showCreateTripDialog,
+            showJoinTripDialog = nav.showJoinTripDialog,
+            joinTripPrefillCode = nav.joinTripPrefillCode,
+            joinTripError = nav.joinTripError,
+            isSubmittingCollab = nav.isSubmittingCollab,
+            showInviteSheetForTrip = refreshedInviteTrip,
+            showMembersScreen = nav.showMembersScreen,
+            showAccountSheet = nav.showAccountSheet,
+            collabErrorMessage = nav.collabErrorMessage
         )
     }.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5_000),
-        initialValue = TripBuddyUiState()
+        initialValue = TripBuddyUiState(
+            currentUserId = currentUserId,
+            currentUserName = currentUserName,
+            currentUserEmail = currentUserEmail,
+            currentUserPhotoUrl = currentUserPhotoUrl
+        )
     )
 
     fun selectTab(tab: TripTab) {
-        navAndModalState.update { it.copy(selectedTab = tab) }
+        navAndModalState.update { it.copy(selectedTab = tab, showMembersScreen = false) }
+    }
+
+    fun selectWorkspace(workspace: Workspace) {
+        navAndModalState.update {
+            it.copy(
+                activeWorkspace = workspace,
+                showMembersScreen = false,
+                activeMapsVisit = null,
+                activeAddEditDateEpochDay = null,
+                editingVisit = null,
+                activeMemoryDetailVisit = null
+            )
+        }
+    }
+
+    fun clearCollabError() {
+        navAndModalState.update { it.copy(collabErrorMessage = null) }
+    }
+
+    fun openCreateTripDialog() {
+        navAndModalState.update { it.copy(showCreateTripDialog = true) }
+    }
+
+    fun dismissCreateTripDialog() {
+        navAndModalState.update { it.copy(showCreateTripDialog = false) }
+    }
+
+    fun createSharedTrip(title: String) {
+        val cleanTitle = title.trim()
+        if (cleanTitle.isEmpty()) return
+        navAndModalState.update { it.copy(isSubmittingCollab = true) }
+        viewModelScope.launch {
+            val result = collabRepository.createSharedTrip(
+                title = cleanTitle,
+                displayName = currentUserName,
+                photoUrl = currentUserPhotoUrl
+            )
+            result.onSuccess { trip ->
+                navAndModalState.update {
+                    it.copy(
+                        isSubmittingCollab = false,
+                        showCreateTripDialog = false,
+                        activeWorkspace = Workspace.Shared(trip.id),
+                        showInviteSheetForTrip = trip
+                    )
+                }
+                _snackbarEvents.trySend("Trip bersama \"${trip.title}\" berhasil dibuat")
+            }.onFailure { error ->
+                navAndModalState.update { it.copy(isSubmittingCollab = false) }
+                _snackbarEvents.trySend(
+                    extractErrorMessage(error, "Gagal membuat trip bersama.")
+                )
+            }
+        }
+    }
+
+    fun openJoinTripDialog(prefillCode: String = "") {
+        navAndModalState.update {
+            it.copy(
+                showJoinTripDialog = true,
+                joinTripPrefillCode = prefillCode,
+                joinTripError = null
+            )
+        }
+    }
+
+    fun dismissJoinTripDialog() {
+        navAndModalState.update {
+            it.copy(showJoinTripDialog = false, joinTripError = null, joinTripPrefillCode = "")
+        }
+    }
+
+    fun joinTripByCode(rawInput: String) {
+        navAndModalState.update { it.copy(isSubmittingCollab = true, joinTripError = null) }
+        val alreadyJoined = uiState.value.sharedTrips.map { it.id }.toSet()
+        viewModelScope.launch {
+            val result = collabRepository.joinTripByCode(
+                rawInput = rawInput,
+                displayName = currentUserName,
+                photoUrl = currentUserPhotoUrl,
+                alreadyJoinedTripIds = alreadyJoined
+            )
+            result.onSuccess { tripId ->
+                navAndModalState.update {
+                    it.copy(
+                        isSubmittingCollab = false,
+                        showJoinTripDialog = false,
+                        joinTripPrefillCode = "",
+                        joinTripError = null,
+                        activeWorkspace = Workspace.Shared(tripId),
+                        selectedTab = TripTab.KALENDER
+                    )
+                }
+                _snackbarEvents.trySend("Berhasil bergabung ke trip bersama!")
+            }.onFailure { error ->
+                navAndModalState.update {
+                    it.copy(
+                        isSubmittingCollab = false,
+                        joinTripError = extractErrorMessage(error, "Gagal bergabung dengan kode tersebut.")
+                    )
+                }
+            }
+        }
+    }
+
+    fun openInviteSheet(trip: SharedTrip? = uiState.value.activeSharedTrip) {
+        if (trip == null) return
+        navAndModalState.update { it.copy(showInviteSheetForTrip = trip) }
+    }
+
+    fun dismissInviteSheet() {
+        navAndModalState.update { it.copy(showInviteSheetForTrip = null) }
+    }
+
+    fun openMembersScreen() {
+        if (uiState.value.activeSharedTrip == null) return
+        navAndModalState.update { it.copy(showMembersScreen = true) }
+    }
+
+    fun closeMembersScreen() {
+        navAndModalState.update { it.copy(showMembersScreen = false) }
+    }
+
+    fun openAccountSheet() {
+        navAndModalState.update { it.copy(showAccountSheet = true) }
+    }
+
+    fun dismissAccountSheet() {
+        navAndModalState.update { it.copy(showAccountSheet = false) }
     }
 
     fun goToPreviousMonth() {
@@ -201,7 +500,8 @@ class TripBuddyViewModel(private val repository: TripRepository) : ViewModel() {
         val visitsForDate = uiState.value.allVisits.filter { it.visitDateEpochDay == epochDay }
         val (year, month, _) = DateUtils.ymdFromEpochDay(epochDay)
         navAndModalState.update { state ->
-            val shouldOpenAddDirectly = visitsForDate.isEmpty() || state.selectedDateEpochDay == epochDay
+            val isShared = state.activeWorkspace is Workspace.Shared
+            val shouldOpenAddDirectly = !isShared && (visitsForDate.isEmpty() || state.selectedDateEpochDay == epochDay)
             state.copy(
                 currentYear = year,
                 currentMonth = month,
@@ -222,7 +522,7 @@ class TripBuddyViewModel(private val repository: TripRepository) : ViewModel() {
         }
     }
 
-    fun openEditLocationSheet(visit: TripVisitEntity) {
+    fun openEditLocationSheet(visit: DisplayVisit) {
         navAndModalState.update {
             it.copy(
                 activeAddEditDateEpochDay = visit.visitDateEpochDay,
@@ -237,7 +537,7 @@ class TripBuddyViewModel(private val repository: TripRepository) : ViewModel() {
         }
     }
 
-    fun openMapsSearchSheet(visit: TripVisitEntity) {
+    fun openMapsSearchSheet(visit: DisplayVisit) {
         navAndModalState.update { it.copy(activeMapsVisit = visit) }
     }
 
@@ -245,7 +545,7 @@ class TripBuddyViewModel(private val repository: TripRepository) : ViewModel() {
         navAndModalState.update { it.copy(activeMapsVisit = null) }
     }
 
-    fun openMemoryDetailSheet(visit: TripVisitEntity) {
+    fun openMemoryDetailSheet(visit: DisplayVisit) {
         navAndModalState.update { it.copy(activeMemoryDetailVisit = visit) }
     }
 
@@ -273,73 +573,282 @@ class TripBuddyViewModel(private val repository: TripRepository) : ViewModel() {
         if (cleanLocation.isEmpty()) return
 
         val existing = navAndModalState.value.editingVisit
+        val workspace = navAndModalState.value.activeWorkspace
+
         viewModelScope.launch {
-            if (existing != null) {
-                repository.updateVisit(
-                    existing.copy(
+            if (existing != null && existing.isShared && existing.sharedTripId != null && existing.sharedDocId != null) {
+                val result = collabRepository.updateSharedVisit(
+                    tripId = existing.sharedTripId,
+                    visitId = existing.sharedDocId,
+                    locationName = cleanLocation,
+                    tripTitle = tripTitle.trim(),
+                    visitDateEpochDay = epochDay,
+                    visitHour = hour,
+                    visitMinute = minute,
+                    planNotes = planNotes.trim(),
+                    memoryNotes = existing.memoryNotes,
+                    completedManually = existing.completedManually
+                )
+                result.onSuccess {
+                    alarmScheduler.scheduleVisitReminder(
+                        existing.copy(
+                            locationName = cleanLocation,
+                            tripTitle = tripTitle.trim(),
+                            visitDateEpochDay = epochDay,
+                            visitHour = hour,
+                            visitMinute = minute,
+                            planNotes = planNotes.trim()
+                        )
+                    )
+                    dismissAddEditSheet()
+                    _snackbarEvents.trySend("Lokasi \"$cleanLocation\" diperbarui untuk semua anggota")
+                }.onFailure { error ->
+                    _snackbarEvents.trySend(extractErrorMessage(error, "Gagal menyimpan perubahan lokasi."))
+                }
+            } else if (existing == null && workspace is Workspace.Shared) {
+                val result = collabRepository.addSharedVisit(
+                    tripId = workspace.tripId,
+                    locationName = cleanLocation,
+                    tripTitle = tripTitle.trim(),
+                    visitDateEpochDay = epochDay,
+                    visitHour = hour,
+                    visitMinute = minute,
+                    planNotes = planNotes.trim(),
+                    authorName = currentUserName
+                )
+                result.onSuccess { docId ->
+                    val createdDisplay = DisplayVisit(
+                        id = "shared_$docId",
+                        localRoomId = null,
+                        sharedTripId = workspace.tripId,
+                        sharedDocId = docId,
                         locationName = cleanLocation,
                         tripTitle = tripTitle.trim(),
                         visitDateEpochDay = epochDay,
                         visitHour = hour,
                         visitMinute = minute,
-                        planNotes = planNotes.trim()
+                        planNotes = planNotes.trim(),
+                        memoryNotes = "",
+                        completedManually = false,
+                        createdByName = currentUserName,
+                        createdAtMillis = System.currentTimeMillis()
                     )
+                    alarmScheduler.scheduleVisitReminder(createdDisplay)
+                    dismissAddEditSheet()
+                    _snackbarEvents.trySend("Lokasi \"$cleanLocation\" ditambahkan ke trip bersama")
+                }.onFailure { error ->
+                    _snackbarEvents.trySend(extractErrorMessage(error, "Gagal menambahkan lokasi."))
+                }
+            } else if (existing != null && existing.localRoomId != null) {
+                val updated = existing.toLocalEntity().copy(
+                    locationName = cleanLocation,
+                    tripTitle = tripTitle.trim(),
+                    visitDateEpochDay = epochDay,
+                    visitHour = hour,
+                    visitMinute = minute,
+                    planNotes = planNotes.trim()
                 )
+                localRepository.updateVisit(updated)
+                alarmScheduler.scheduleVisitReminder(updated)
+                dismissAddEditSheet()
+                _snackbarEvents.trySend("Lokasi \"$cleanLocation\" disimpan beserta pengingatnya")
             } else {
-                repository.insertVisit(
-                    TripVisitEntity(
-                        locationName = cleanLocation,
-                        tripTitle = tripTitle.trim(),
-                        visitDateEpochDay = epochDay,
-                        visitHour = hour,
-                        visitMinute = minute,
-                        planNotes = planNotes.trim()
-                    )
+                val newVisit = TripVisitEntity(
+                    locationName = cleanLocation,
+                    tripTitle = tripTitle.trim(),
+                    visitDateEpochDay = epochDay,
+                    visitHour = hour,
+                    visitMinute = minute,
+                    planNotes = planNotes.trim()
                 )
+                val insertedId = localRepository.insertVisit(newVisit)
+                alarmScheduler.scheduleVisitReminder(newVisit.copy(id = insertedId))
+                dismissAddEditSheet()
+                _snackbarEvents.trySend("Lokasi \"$cleanLocation\" disimpan beserta pengingatnya")
             }
-            dismissAddEditSheet()
         }
     }
 
-    fun updateLocationNameFromMapsSheet(visit: TripVisitEntity, newLocationName: String) {
+    fun updateLocationNameFromMapsSheet(visit: DisplayVisit, newLocationName: String) {
         val clean = newLocationName.trim()
         if (clean.isEmpty() || clean == visit.locationName) return
         viewModelScope.launch {
-            repository.updateVisit(visit.copy(locationName = clean))
-        }
-    }
-
-    fun toggleManualCompleted(visit: TripVisitEntity) {
-        viewModelScope.launch {
-            repository.updateVisit(
-                visit.copy(isCompletedManually = !visit.isCompletedManually)
-            )
-        }
-    }
-
-    fun saveMemoryNotes(visit: TripVisitEntity, memoryNotes: String) {
-        viewModelScope.launch {
-            repository.updateVisit(visit.copy(memoryNotes = memoryNotes.trim()))
-            dismissMemoryDetailSheet()
-        }
-    }
-
-    fun deleteVisit(visit: TripVisitEntity) {
-        viewModelScope.launch {
-            repository.deleteVisitById(visit.id)
-            navAndModalState.update { state ->
-                state.copy(
-                    activeMapsVisit = if (state.activeMapsVisit?.id == visit.id) null else state.activeMapsVisit,
-                    activeMemoryDetailVisit = if (state.activeMemoryDetailVisit?.id == visit.id) null else state.activeMemoryDetailVisit
+            if (visit.isShared && visit.sharedTripId != null && visit.sharedDocId != null) {
+                val result = collabRepository.updateSharedVisit(
+                    tripId = visit.sharedTripId,
+                    visitId = visit.sharedDocId,
+                    locationName = clean,
+                    tripTitle = visit.tripTitle,
+                    visitDateEpochDay = visit.visitDateEpochDay,
+                    visitHour = visit.visitHour,
+                    visitMinute = visit.visitMinute,
+                    planNotes = visit.planNotes,
+                    memoryNotes = visit.memoryNotes,
+                    completedManually = visit.completedManually
                 )
+                result.onSuccess {
+                    alarmScheduler.scheduleVisitReminder(visit.copy(locationName = clean))
+                }.onFailure { error ->
+                    _snackbarEvents.trySend(extractErrorMessage(error, "Gagal memperbarui nama lokasi."))
+                }
+            } else if (visit.localRoomId != null) {
+                val updated = visit.toLocalEntity().copy(locationName = clean)
+                localRepository.updateVisit(updated)
+                alarmScheduler.scheduleVisitReminder(updated)
             }
         }
     }
 
-    class Factory(private val repository: TripRepository) : ViewModelProvider.Factory {
+    fun toggleManualCompleted(visit: DisplayVisit) {
+        val nextCompleted = !visit.completedManually
+        viewModelScope.launch {
+            if (visit.isShared && visit.sharedTripId != null && visit.sharedDocId != null) {
+                val result = collabRepository.updateSharedVisit(
+                    tripId = visit.sharedTripId,
+                    visitId = visit.sharedDocId,
+                    locationName = visit.locationName,
+                    tripTitle = visit.tripTitle,
+                    visitDateEpochDay = visit.visitDateEpochDay,
+                    visitHour = visit.visitHour,
+                    visitMinute = visit.visitMinute,
+                    planNotes = visit.planNotes,
+                    memoryNotes = visit.memoryNotes,
+                    completedManually = nextCompleted
+                )
+                result.onSuccess {
+                    val updatedDisplay = visit.copy(completedManually = nextCompleted)
+                    if (nextCompleted) {
+                        alarmScheduler.cancelVisitReminder(updatedDisplay)
+                    } else {
+                        alarmScheduler.scheduleVisitReminder(updatedDisplay)
+                    }
+                }.onFailure { error ->
+                    _snackbarEvents.trySend(extractErrorMessage(error, "Gagal memperbarui status lokasi."))
+                }
+            } else if (visit.localRoomId != null) {
+                val updated = visit.toLocalEntity().copy(isCompletedManually = nextCompleted)
+                localRepository.updateVisit(updated)
+                if (updated.isCompletedManually) {
+                    alarmScheduler.cancelVisitReminder(updated.id)
+                } else {
+                    alarmScheduler.scheduleVisitReminder(updated)
+                }
+            }
+        }
+    }
+
+    fun saveMemoryNotes(visit: DisplayVisit, memoryNotes: String) {
+        val cleanNotes = memoryNotes.trim()
+        viewModelScope.launch {
+            if (visit.isShared && visit.sharedTripId != null && visit.sharedDocId != null) {
+                val result = collabRepository.updateSharedVisit(
+                    tripId = visit.sharedTripId,
+                    visitId = visit.sharedDocId,
+                    locationName = visit.locationName,
+                    tripTitle = visit.tripTitle,
+                    visitDateEpochDay = visit.visitDateEpochDay,
+                    visitHour = visit.visitHour,
+                    visitMinute = visit.visitMinute,
+                    planNotes = visit.planNotes,
+                    memoryNotes = cleanNotes,
+                    completedManually = visit.completedManually
+                )
+                result.onSuccess {
+                    dismissMemoryDetailSheet()
+                    _snackbarEvents.trySend("Catatan kenangan disimpan")
+                }.onFailure { error ->
+                    _snackbarEvents.trySend(extractErrorMessage(error, "Gagal menyimpan catatan kenangan."))
+                }
+            } else if (visit.localRoomId != null) {
+                localRepository.updateVisit(visit.toLocalEntity().copy(memoryNotes = cleanNotes))
+                dismissMemoryDetailSheet()
+                _snackbarEvents.trySend("Catatan kenangan disimpan")
+            }
+        }
+    }
+
+    fun deleteVisit(visit: DisplayVisit) {
+        viewModelScope.launch {
+            if (visit.isShared && visit.sharedTripId != null && visit.sharedDocId != null) {
+                val result = collabRepository.deleteSharedVisit(visit.sharedTripId, visit.sharedDocId)
+                result.onSuccess {
+                    alarmScheduler.cancelVisitReminder(visit)
+                    navAndModalState.update { state ->
+                        state.copy(
+                            activeMapsVisit = if (state.activeMapsVisit?.id == visit.id) null else state.activeMapsVisit,
+                            activeMemoryDetailVisit = if (state.activeMemoryDetailVisit?.id == visit.id) null else state.activeMemoryDetailVisit
+                        )
+                    }
+                    _snackbarEvents.trySend("\"${visit.locationName}\" dihapus")
+                }.onFailure { error ->
+                    _snackbarEvents.trySend(extractErrorMessage(error, "Gagal menghapus lokasi."))
+                }
+            } else if (visit.localRoomId != null) {
+                alarmScheduler.cancelVisitReminder(visit.localRoomId)
+                localRepository.deleteVisitById(visit.localRoomId)
+                navAndModalState.update { state ->
+                    state.copy(
+                        activeMapsVisit = if (state.activeMapsVisit?.id == visit.id) null else state.activeMapsVisit,
+                        activeMemoryDetailVisit = if (state.activeMemoryDetailVisit?.id == visit.id) null else state.activeMemoryDetailVisit
+                    )
+                }
+                _snackbarEvents.trySend("\"${visit.locationName}\" dihapus")
+            }
+        }
+    }
+
+    fun sendDateComment(text: String) {
+        val tripId = (navAndModalState.value.activeWorkspace as? Workspace.Shared)?.tripId ?: return
+        val epochDay = navAndModalState.value.selectedDateEpochDay
+        viewModelScope.launch {
+            val result = collabRepository.addDateComment(
+                tripId = tripId,
+                dateEpochDay = epochDay,
+                authorName = currentUserName,
+                authorPhotoUrl = currentUserPhotoUrl,
+                text = text
+            )
+            result.onFailure { error ->
+                _snackbarEvents.trySend(extractErrorMessage(error, "Gagal mengirim komentar."))
+            }
+        }
+    }
+
+    fun deleteDateComment(comment: TripDateComment) {
+        val tripId = (navAndModalState.value.activeWorkspace as? Workspace.Shared)?.tripId ?: return
+        if (comment.id.isBlank()) return
+        viewModelScope.launch {
+            val result = collabRepository.deleteDateComment(tripId, comment.id)
+            result.onFailure { error ->
+                _snackbarEvents.trySend(extractErrorMessage(error, "Gagal menghapus komentar."))
+            }
+        }
+    }
+
+    fun scheduleTestNotification(): AlarmScheduleResult {
+        return alarmScheduler.scheduleTestNotification(delaySeconds = 10)
+    }
+
+    class Factory(
+        private val localRepository: TripRepository,
+        private val collabRepository: CollabRepository,
+        private val alarmScheduler: TripAlarmScheduler,
+        private val currentUserId: String,
+        private val currentUserName: String,
+        private val currentUserEmail: String,
+        private val currentUserPhotoUrl: String
+    ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T {
-            return TripBuddyViewModel(repository) as T
+            return TripBuddyViewModel(
+                localRepository = localRepository,
+                collabRepository = collabRepository,
+                alarmScheduler = alarmScheduler,
+                currentUserId = currentUserId,
+                currentUserName = currentUserName,
+                currentUserEmail = currentUserEmail,
+                currentUserPhotoUrl = currentUserPhotoUrl
+            ) as T
         }
     }
 }

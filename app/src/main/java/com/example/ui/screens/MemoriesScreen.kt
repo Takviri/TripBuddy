@@ -49,7 +49,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.R
-import com.example.data.TripVisitEntity
+import com.example.ui.DisplayVisit
 import com.example.ui.MemoryFilter
 import com.example.ui.TripBuddyUiState
 import com.example.util.DateUtils
@@ -60,8 +60,8 @@ fun MemoriesScreen(
     onBackToHome: () -> Unit,
     onSearchQueryChange: (String) -> Unit,
     onFilterChange: (MemoryFilter) -> Unit,
-    onMemoryClick: (TripVisitEntity) -> Unit,
-    onOpenMapsForVisit: (TripVisitEntity) -> Unit,
+    onMemoryClick: (DisplayVisit) -> Unit,
+    onOpenMapsForVisit: (DisplayVisit) -> Unit,
     modifier: Modifier = Modifier
 ) {
     BackHandler(onBack = onBackToHome)
@@ -225,7 +225,7 @@ fun MemoriesScreen(
 
 @Composable
 private fun MemoryPlaceCard(
-    visit: TripVisitEntity,
+    visit: DisplayVisit,
     onCardClick: () -> Unit,
     onOpenMapsClick: () -> Unit
 ) {
@@ -277,21 +277,30 @@ private fun MemoryPlaceCard(
                         )
                         Surface(
                             shape = RoundedCornerShape(8.dp),
-                            color = if (visit.isCompletedManually) {
+                            color = if (visit.completedManually) {
                                 MaterialTheme.colorScheme.secondaryContainer
                             } else {
                                 MaterialTheme.colorScheme.primaryContainer
                             }
                         ) {
                             Text(
-                                text = if (visit.isCompletedManually) "Selesai" else "Telah Berlalu",
+                                text = if (visit.completedManually) "Selesai" else "Telah Berlalu",
                                 style = MaterialTheme.typography.labelSmall,
-                                color = if (visit.isCompletedManually) {
+                                color = if (visit.completedManually) {
                                     MaterialTheme.colorScheme.secondary
                                 } else {
                                     MaterialTheme.colorScheme.primary
                                 },
                                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                            )
+                        }
+                        if (visit.isShared && visit.createdByName.isNotBlank()) {
+                            Text(
+                                text = "• ${visit.createdByName}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
                         }
                     }

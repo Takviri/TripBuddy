@@ -60,14 +60,14 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import com.example.R
-import com.example.data.TripVisitEntity
+import com.example.ui.DisplayVisit
 import com.example.util.DateUtils
 import com.example.util.MapsAndVoiceHelper
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MapsSearchSheet(
-    visit: TripVisitEntity,
+    visit: DisplayVisit,
     onDismiss: () -> Unit,
     onUpdateLocationName: (String) -> Unit,
     onShowMessage: (String) -> Unit

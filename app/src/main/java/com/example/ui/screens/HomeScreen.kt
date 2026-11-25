@@ -27,6 +27,7 @@ import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Explore
 import androidx.compose.material.icons.rounded.FlightTakeoff
 import androidx.compose.material.icons.rounded.Map
+import androidx.compose.material.icons.rounded.NotificationsActive
 import androidx.compose.material.icons.rounded.Schedule
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -52,7 +53,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.R
-import com.example.data.TripVisitEntity
+import com.example.ui.DisplayVisit
 import com.example.ui.TripBuddyUiState
 import com.example.ui.components.LocationCard
 import com.example.ui.theme.OceanBlue
@@ -68,8 +69,9 @@ fun HomeScreen(
     onOpenCalendar: () -> Unit,
     onOpenMemories: () -> Unit,
     onOpenAddToday: () -> Unit,
-    onOpenMapsForVisit: (TripVisitEntity) -> Unit,
-    onToggleComplete: (TripVisitEntity) -> Unit,
+    onOpenMapsForVisit: (DisplayVisit) -> Unit,
+    onToggleComplete: (DisplayVisit) -> Unit,
+    onTestNotificationClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     Box(
@@ -89,11 +91,21 @@ fun HomeScreen(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Column(
+                        modifier = Modifier.weight(1f),
+                        verticalArrangement = Arrangement.spacedBy(2.dp)
+                    ) {
                         Text(
-                            text = "Selamat Menjelajah",
+                            text = uiState.activeSharedTrip?.let { "Trip Bersama: ${it.title}" }
+                                ?: "Selamat Menjelajah",
                             style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                            color = if (uiState.activeSharedTrip != null) {
+                                MaterialTheme.colorScheme.primary
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            },
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                         Text(
                             text = stringResource(R.string.app_name),
@@ -171,6 +183,10 @@ fun HomeScreen(
                             .testTag("home_stat_memories")
                     )
                 }
+            }
+
+            item {
+                NotificationTestCard(onTestNotificationClick = onTestNotificationClick)
             }
 
             item {
@@ -271,7 +287,7 @@ fun HomeScreen(
 
 @Composable
 private fun NearestTripCountdownCard(
-    visit: TripVisitEntity,
+    visit: DisplayVisit,
     nowMillis: Long,
     onOpenMapsClick: () -> Unit,
     onMarkCompletedClick: () -> Unit
@@ -626,3 +642,69 @@ private fun StatSummaryCard(
         }
     }
 }
+
+@Composable
+private fun NotificationTestCard(
+    onTestNotificationClick: () -> Unit
+) {
+    Surface(
+        shape = RoundedCornerShape(18.dp),
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = MaterialTheme.colorScheme.primaryContainer,
+                modifier = Modifier.size(42.dp)
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        imageVector = Icons.Rounded.NotificationsActive,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+            }
+
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(2.dp)
+            ) {
+                Text(
+                    text = "Pengingat Jadwal",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Text(
+                    text = "Uji notifikasi lokal dalam 10 detik",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
+            OutlinedButton(
+                onClick = onTestNotificationClick,
+                modifier = Modifier
+                    .height(48.dp)
+                    .testTag("test_notification_button"),
+                shape = RoundedCornerShape(12.dp),
+                contentPadding = PaddingValues(horizontal = 14.dp)
+            ) {
+                Text(
+                    text = stringResource(R.string.test_notification_button),
+                    style = MaterialTheme.typography.labelLarge
+                )
+            }
+        }
+    }
+}
+

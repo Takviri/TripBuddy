@@ -56,7 +56,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.example.R
-import com.example.data.TripVisitEntity
+import com.example.ui.DisplayVisit
 import com.example.util.DateUtils
 import com.example.util.MapsAndVoiceHelper
 
@@ -64,7 +64,7 @@ import com.example.util.MapsAndVoiceHelper
 @Composable
 fun AddLocationSheet(
     epochDay: Long,
-    editingVisit: TripVisitEntity?,
+    editingVisit: DisplayVisit?,
     onDismiss: () -> Unit,
     onSave: (locationName: String, tripTitle: String, hour: Int, minute: Int, planNotes: String) -> Unit
 ) {

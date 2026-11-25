@@ -47,10 +47,12 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.example.R
-import com.example.data.TripVisitEntity
+import com.example.collab.TripDateComment
+import com.example.ui.DisplayVisit
 import com.example.ui.TripBuddyUiState
-import com.example.util.DateUtils
+import com.example.ui.components.DateCommentsSection
 import com.example.ui.components.LocationCard
+import com.example.util.DateUtils
 
 @Composable
 fun CalendarScreen(
@@ -61,10 +63,12 @@ fun CalendarScreen(
     onJumpToToday: () -> Unit,
     onDateClick: (Long) -> Unit,
     onAddLocationForSelectedDate: () -> Unit,
-    onOpenMapsForVisit: (TripVisitEntity) -> Unit,
-    onToggleComplete: (TripVisitEntity) -> Unit,
-    onEditVisit: (TripVisitEntity) -> Unit,
-    onDeleteVisit: (TripVisitEntity) -> Unit,
+    onOpenMapsForVisit: (DisplayVisit) -> Unit,
+    onToggleComplete: (DisplayVisit) -> Unit,
+    onEditVisit: (DisplayVisit) -> Unit,
+    onDeleteVisit: (DisplayVisit) -> Unit,
+    onSendComment: (String) -> Unit,
+    onDeleteComment: (TripDateComment) -> Unit,
     modifier: Modifier = Modifier
 ) {
     BackHandler(onBack = onBackToHome)
@@ -125,6 +129,18 @@ fun CalendarScreen(
                             )
                         }
                     }
+
+                    if (uiState.activeSharedTrip != null) {
+                        item {
+                            DateCommentsSection(
+                                selectedDateEpochDay = uiState.selectedDateEpochDay,
+                                comments = uiState.commentsOnSelectedDate,
+                                currentUserId = uiState.currentUserId,
+                                onSendComment = onSendComment,
+                                onDeleteComment = onDeleteComment
+                            )
+                        }
+                    }
                 }
             }
         } else {
@@ -171,6 +187,18 @@ fun CalendarScreen(
                             onToggleComplete = { onToggleComplete(visit) },
                             onEditClick = { onEditVisit(visit) },
                             onDeleteClick = { onDeleteVisit(visit) }
+                        )
+                    }
+                }
+
+                if (uiState.activeSharedTrip != null) {
+                    item {
+                        DateCommentsSection(
+                            selectedDateEpochDay = uiState.selectedDateEpochDay,
+                            comments = uiState.commentsOnSelectedDate,
+                            currentUserId = uiState.currentUserId,
+                            onSendComment = onSendComment,
+                            onDeleteComment = onDeleteComment
                         )
                     }
                 }

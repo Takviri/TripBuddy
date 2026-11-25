@@ -32,12 +32,12 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.R
-import com.example.data.TripVisitEntity
+import com.example.ui.DisplayVisit
 import com.example.util.DateUtils
 
 @Composable
 fun LocationCard(
-    visit: TripVisitEntity,
+    visit: DisplayVisit,
     showDateBadge: Boolean,
     onOpenMapsClick: () -> Unit,
     onToggleComplete: () -> Unit,
@@ -69,7 +69,7 @@ fun LocationCard(
             ) {
                 Surface(
                     shape = RoundedCornerShape(12.dp),
-                    color = if (visit.isCompletedManually) {
+                    color = if (visit.completedManually) {
                         MaterialTheme.colorScheme.secondaryContainer
                     } else {
                         MaterialTheme.colorScheme.primaryContainer
@@ -79,7 +79,7 @@ fun LocationCard(
                     Icon(
                         imageVector = Icons.Rounded.LocationOn,
                         contentDescription = null,
-                        tint = if (visit.isCompletedManually) {
+                        tint = if (visit.completedManually) {
                             MaterialTheme.colorScheme.secondary
                         } else {
                             MaterialTheme.colorScheme.primary
@@ -112,6 +112,15 @@ fun LocationCard(
                                 text = DateUtils.formatIndonesianShortDate(visit.visitDateEpochDay),
                                 style = MaterialTheme.typography.labelMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        if (visit.isShared && visit.createdByName.isNotBlank()) {
+                            Text(
+                                text = "• ${visit.createdByName}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
                         }
                     }
@@ -182,13 +191,13 @@ fun LocationCard(
                             .testTag("toggle_complete_button_${visit.id}")
                     ) {
                         Icon(
-                            imageVector = if (visit.isCompletedManually) {
+                            imageVector = if (visit.completedManually) {
                                 Icons.Rounded.CheckCircle
                             } else {
                                 Icons.Outlined.CheckCircle
                             },
                             contentDescription = stringResource(R.string.cd_mark_visited),
-                            tint = if (visit.isCompletedManually) {
+                            tint = if (visit.completedManually) {
                                 MaterialTheme.colorScheme.secondary
                             } else {
                                 MaterialTheme.colorScheme.onSurfaceVariant

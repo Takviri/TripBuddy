@@ -14,6 +14,9 @@ interface TripVisitDao {
     )
     fun getAllVisits(): Flow<List<TripVisitEntity>>
 
+    @Query("SELECT * FROM trip_visits WHERE isCompletedManually = 0")
+    suspend fun getPendingVisitsOnce(): List<TripVisitEntity>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertVisit(visit: TripVisitEntity): Long
 
