@@ -12,7 +12,20 @@
           "package_name": "com.aistudio.tripbuddy.x7q2kp"
         }
       },
-      "oauth_client": [],
+      "oauth_client": [
+        {
+          "client_id": "29083113026-vsf3nbjmjgf0c4jeq6eke8v7acmfcpb0.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.aistudio.tripbuddy.x7q2kp",
+            "certificate_hash": "adb48772cf67545e80692d87970f6ebd03d95f72"
+          }
+        },
+        {
+          "client_id": "29083113026-42p7lrtcjmkg6j6a12moiptjq0ilr9rk.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
       "api_key": [
         {
           "current_key": "AIzaSyCL2YVH8KuyxlhV5dEDadtuUSvfrXpZzXQ"
@@ -20,7 +33,12 @@
       ],
       "services": {
         "appinvite_service": {
-          "other_platform_oauth_client": []
+          "other_platform_oauth_client": [
+            {
+              "client_id": "29083113026-42p7lrtcjmkg6j6a12moiptjq0ilr9rk.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
         }
       }
     }
