@@ -23,11 +23,7 @@ class CollabRepository(
     private val db: FirebaseFirestore,
     private val auth: FirebaseAuth = Firebase.auth
 ) {
-    constructor(context: Context) : this(
-        FirebaseFirestore.getInstance(
-            context.applicationContext.getString(R.string.firestore_database_id)
-        )
-    )
+    constructor(context: Context) : this(FirebaseFirestore.getInstance())
 
     private fun requireUserId(): String {
         return auth.currentUser?.uid
